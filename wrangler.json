@@ -8,7 +8,7 @@
       "tag": "v1"
     },
     {
-      "new_classes": ["RoomRegistry"],
+      "new_sqlite_classes": ["RoomRegistry"],
       "tag": "v2"
     }
   ],
