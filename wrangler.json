@@ -21,6 +21,10 @@
       {
         "class_name": "Chat",
         "name": "Chat"
+      },
+      {
+        "class_name": "RoomRegistry",
+        "name": "RoomRegistry"
       }
     ]
   },

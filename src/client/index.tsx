@@ -7,11 +7,14 @@ import {
   Route,
   Navigate,
   useParams,
+  useNavigate,
 } from "react-router";
 import { nanoid } from "nanoid";
 import { ethers } from "ethers";
 
 import { names, type ChatMessage, type Message } from "../shared";
+import Admin from "./Admin";
+import CreateRoom from "./CreateRoom";
 
 // 扩展Window接口以包含ethereum属性
 declare global {
@@ -32,6 +35,7 @@ function App() {
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
   const { room } = useParams();
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   // 将完整地址转换为短地址用于显示
   const getShortAddress = (address: string) => {
@@ -195,7 +199,21 @@ function App() {
     },
   });
 
- 
+  // 捕获WebSocket连接失败，自动跳转到付费创建房间
+  useEffect(() => {
+    // 伪代码：监听socket错误
+    if (socket) {
+      socket.addEventListener("error", (e) => {
+        navigate(`/create-room?room=${room}`);
+      });
+      socket.addEventListener("close", (e) => {
+        // 可根据e.reason判断是否未注册
+        if (e.reason && e.reason.includes("未注册")) {
+          navigate(`/create-room?room=${room}`);
+        }
+      });
+    }
+  }, [socket, room, navigate]);
 
   return (
     <div style={{
@@ -646,8 +664,11 @@ function App() {
 createRoot(document.getElementById("root")!).render(
   <BrowserRouter>
     <Routes>
-      <Route path="/" element={<Navigate to={`/${nanoid()}`} />} />
-      <Route path="/:room" element={<App />} />
+      {/* <Route path="/" element={<Navigate to={`/${nanoid()}`} />} /> */}
+      <Route path="/" element={<Navigate to={`/0x06c4607846903b03ac66F1e788069288660B4444`} />} />
+      <Route path="/admin" element={<Admin />} />
+      <Route path="/create-room" element={<CreateRoom />} />
+      <Route path=":room" element={<App />} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   </BrowserRouter>,
