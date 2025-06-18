@@ -43,25 +43,33 @@ export default function CreateRoom() {
     }
   };
 
-  // 自动恢复钱包连接
+  // 页面加载时自动检测当前账户，并监听钱包切换自动刷新状态
   useEffect(() => {
-    async function checkWalletConnection() {
-      if (typeof window.ethereum !== 'undefined') {
-        try {
-          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-          if (accounts.length > 0) {
-            setWalletAddress(accounts[0]);
-            setIsConnected(true);
-          }
-        } catch {}
+    function updateAccount(accounts: string[]) {
+      console.log('[autoDetectOrChanged]', accounts);
+      if (accounts.length > 0) {
+        setWalletAddress(accounts[0]);
+        setIsConnected(true);
+      } else {
+        setWalletAddress("");
+        setIsConnected(false);
       }
     }
-    checkWalletConnection();
+    if (window.ethereum) {
+      // 页面加载时自动检测
+      window.ethereum.request({ method: 'eth_accounts' }).then(updateAccount);
+      // 监听切换
+      window.ethereum.on('accountsChanged', updateAccount);
+      return () => {
+        window.ethereum && window.ethereum.removeListener('accountsChanged', updateAccount);
+      };
+    }
   }, []);
 
-  // 查询USDT余额
+  // 只要walletAddress或isConnected变化就自动查余额，并打印log
   useEffect(() => {
     async function fetchBalance() {
+      console.log('[fetchBalance] isConnected:', isConnected, 'walletAddress:', walletAddress);
       if (!isConnected || !walletAddress) {
         setUsdtBalance(0n);
         return;
@@ -70,8 +78,10 @@ export default function CreateRoom() {
       try {
         const usdt = new ethers.Contract(CHAIN_CONFIG.USDT_ADDRESS, usdtAbi, fallbackProvider);
         const balance: bigint = await usdt.balanceOf(walletAddress);
+        console.log('[fetchBalance] USDT余额:', balance.toString());
         setUsdtBalance(balance);
-      } catch {
+      } catch (e) {
+        console.log('[fetchBalance] 查询失败', e);
         setUsdtBalance(0n);
       } finally {
         setBalanceLoading(false);

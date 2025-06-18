@@ -19,30 +19,23 @@ const fallbackProvider = new ethers.FallbackProvider(
 );
 
 async function verifyPayment(txHash: string, wallet: string) {
-  const receipt = await fallbackProvider.getTransactionReceipt(txHash);
-  if (!receipt) return { success: false, message: "交易未上链" };
-  const iface = new ethers.Interface(usdtAbi);
-  let paid = false;
-  for (const log of receipt.logs) {
-    if (log.address.toLowerCase() === CHAIN_CONFIG.USDT_ADDRESS.toLowerCase()) {
-      try {
-        const parsed = iface.parseLog(log);
-        if (
-          parsed &&
-          parsed.name === "Transfer" &&
-          parsed.args.from.toLowerCase() === wallet.toLowerCase() &&
-          parsed.args.to.toLowerCase() === CHAIN_CONFIG.RECEIVER.toLowerCase() &&
-          parsed.args.value.toString() === ethers.parseUnits(CHAIN_CONFIG.CREATE_ROOM_AMOUNT, CHAIN_CONFIG.USDT_DECIMALS).toString()
-        ) {
-          paid = true;
-        }
-      } catch (e) {
-        // 忽略无法解析的日志
-      }
-    }
+  // 用BscScan API校验交易
+  const url = `https://api.bscscan.com/api?module=transaction&action=gettxreceiptstatus&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
+  const res = await fetch(url);
+  const data = (await res.json()) as any;
+  if (data.status === "1" && data.result.status === "1") {
+    // 交易成功，再查转账事件
+    // 查询USDT转账事件
+    const logUrl = `https://api.bscscan.com/api?module=logs&action=getLogs&fromBlock=0&toBlock=latest&address=${CHAIN_CONFIG.USDT_ADDRESS}&topic0=0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}&topic1=0x${wallet.replace('0x','').padStart(64,'0')}&topic2=0x${CHAIN_CONFIG.RECEIVER.replace('0x','').padStart(64,'0')}`;
+    const logRes = await fetch(logUrl);
+    const logData = (await logRes.json()) as any;
+    // 检查是否有符合条件的转账
+    const amountHex = BigInt(ethers.parseUnits(CHAIN_CONFIG.CREATE_ROOM_AMOUNT, CHAIN_CONFIG.USDT_DECIMALS)).toString(16).padStart(64, '0');
+    const found = (logData.result || []).some((log: any) => log.data.toLowerCase() === '0x'+amountHex);
+    if (found) return { success: true };
+    return { success: false, message: "未检测到正确的USDT转账" };
   }
-  if (!paid) return { success: false, message: "未检测到正确的USDT转账" };
-  return { success: true };
+  return { success: false, message: "交易未上链或失败" };
 }
 
 export class Chat extends Server<Env> {
