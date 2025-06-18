@@ -6,6 +6,10 @@
     {
       "new_sqlite_classes": ["Chat"],
       "tag": "v1"
+    },
+    {
+      "new_classes": ["RoomRegistry"],
+      "tag": "v2"
     }
   ],
   "assets": {

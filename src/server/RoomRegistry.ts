@@ -1,9 +1,6 @@
-import { DurableObject } from "cloudflare:workers";
-
-export class RoomRegistry extends DurableObject {
+export class RoomRegistry {
   ctx: DurableObjectState;
   constructor(ctx: DurableObjectState, env: any) {
-    super(ctx, env);
     this.ctx = ctx;
   }
 
