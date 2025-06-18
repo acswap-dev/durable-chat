@@ -23,6 +23,28 @@ export type Message =
   | {
       type: "all";
       messages: ChatMessage[];
+    }
+  | {
+      type: "delete";
+      id: string;
+    }
+  | {
+      type: "clear";
+    }
+  | {
+      type: "admin";
+      action: "delete" | "clear" | "deleteUser" | "getStats";
+      messageId?: string;
+      user?: string;
+    }
+  | {
+      type: "stats";
+      data: {
+        totalMessages: number;
+        uniqueUsers: number;
+        userMessageCounts: Record<string, number>;
+        messages: ChatMessage[];
+      };
     };
 
 export const names = [

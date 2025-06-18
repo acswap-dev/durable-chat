@@ -22,12 +22,12 @@ export class Chat extends Server<Env> {
 
     // create the messages table if it doesn't exist
     this.ctx.storage.sql.exec(
-      `CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, user TEXT, role TEXT, content TEXT)`,
+      `CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, user TEXT, role TEXT, content TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`,
     );
 
     // load the messages from the database
     this.messages = this.ctx.storage.sql
-      .exec(`SELECT * FROM messages`)
+      .exec(`SELECT * FROM messages ORDER BY timestamp ASC`)
       .toArray() as ChatMessage[];
   }
 
@@ -65,15 +65,89 @@ export class Chat extends Server<Env> {
     );
   }
 
-  onMessage(connection: Connection, message: WSMessage) {
-    // let's broadcast the raw message to everyone else
-    this.broadcast(message);
+  // 删除单条消息
+  deleteMessage(messageId: string) {
+    this.messages = this.messages.filter((m) => m.id !== messageId);
+    this.ctx.storage.sql.exec(`DELETE FROM messages WHERE id = '${messageId}'`);
+    
+    // 广播删除消息给所有客户端
+    this.broadcastMessage({
+      type: "delete",
+      id: messageId,
+    } as any);
+  }
 
-    // let's update our local messages store
+  // 清空所有消息
+  clearAllMessages() {
+    this.messages = [];
+    this.ctx.storage.sql.exec(`DELETE FROM messages`);
+    
+    // 广播清空消息给所有客户端
+    this.broadcastMessage({
+      type: "clear",
+    } as any);
+  }
+
+  // 获取消息统计
+  getMessageStats() {
+    const totalMessages = this.messages.length;
+    const uniqueUsers = new Set(this.messages.map(m => m.user)).size;
+    const userMessageCounts = this.messages.reduce((acc, msg) => {
+      acc[msg.user] = (acc[msg.user] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return {
+      totalMessages,
+      uniqueUsers,
+      userMessageCounts,
+      messages: this.messages
+    };
+  }
+
+  // 删除指定用户的消息
+  deleteUserMessages(user: string) {
+    const deletedCount = this.messages.filter(m => m.user === user).length;
+    this.messages = this.messages.filter((m) => m.user !== user);
+    this.ctx.storage.sql.exec(`DELETE FROM messages WHERE user = '${user}'`);
+    
+    return deletedCount;
+  }
+
+  onMessage(connection: Connection, message: WSMessage) {
     const parsed = JSON.parse(message as string) as Message;
+    
+    // 处理管理命令
+    if (parsed.type === "admin") {
+      const adminMessage = parsed as any;
+      
+      switch (adminMessage.action) {
+        case "delete":
+          this.deleteMessage(adminMessage.messageId);
+          break;
+        case "clear":
+          this.clearAllMessages();
+          break;
+        case "deleteUser":
+          this.deleteUserMessages(adminMessage.user);
+          break;
+        case "getStats":
+          connection.send(JSON.stringify({
+            type: "stats",
+            data: this.getMessageStats()
+          }));
+          break;
+      }
+      return;
+    }
+
+    // 处理普通消息
     if (parsed.type === "add" || parsed.type === "update") {
       this.saveMessage(parsed);
     }
+
+    // 广播消息给其他用户
+    this.broadcast(message);
   }
 }
 

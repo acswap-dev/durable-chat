@@ -33,6 +33,19 @@ function App() {
   const { room } = useParams();
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
+  // 将完整地址转换为短地址用于显示
+  const getShortAddress = (address: string) => {
+    if (address.includes('...')) {
+      return address; // 已经是短地址格式
+    }
+    return `${address.slice(0, 4)}...${address.slice(-4)}`;
+  };
+
+  // 检查是否是当前用户的消息
+  const isCurrentUser = (messageUser: string) => {
+    return messageUser === walletAddress;
+  };
+
   // 监听窗口大小变化
   useEffect(() => {
     const handleResize = () => {
@@ -41,6 +54,27 @@ function App() {
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // 自动恢复钱包连接
+  useEffect(() => {
+    async function checkWalletConnection() {
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+          if (accounts.length > 0) {
+            const address = accounts[0];
+            setWalletAddress(address);
+            const shortAddress = getShortAddress(address);
+            setName(shortAddress);
+            setIsConnected(true);
+          }
+        } catch (error) {
+          console.error('自动恢复钱包连接失败:', error);
+        }
+      }
+    }
+    checkWalletConnection();
   }, []);
 
   // 自动滚动到最新消息
@@ -67,7 +101,7 @@ function App() {
           const address = accounts[0];
           setWalletAddress(address);
           // 将钱包地址设置为用户名，显示前4位和后4位
-          const shortAddress = `${address.slice(0, 4)}...${address.slice(-4)}`;
+          const shortAddress = getShortAddress(address);
           setName(shortAddress);
           setIsConnected(true);
         }
@@ -94,7 +128,7 @@ function App() {
         if (accounts.length > 0) {
           const address = accounts[0];
           setWalletAddress(address);
-          const shortAddress = `${address.slice(0, 4)}...${address.slice(-4)}`;
+          const shortAddress = getShortAddress(address);
           setName(shortAddress);
           setIsConnected(true);
         } else {
@@ -151,11 +185,17 @@ function App() {
               : m,
           ),
         );
-      } else {
+      } else if (message.type === "all") {
         setMessages(message.messages);
+      } else if (message.type === "delete") {
+        setMessages((messages) => messages.filter((m) => m.id !== message.id));
+      } else if (message.type === "clear") {
+        setMessages([]);
       }
     },
   });
+
+ 
 
   return (
     <div style={{
@@ -205,9 +245,12 @@ function App() {
               <div style={{ 
                 fontSize: '14px', 
                 color: '#666',
-                marginTop: '4px'
+                marginTop: '4px',
+                wordBreak: 'break-all'
               }}>
-                房间: {room}
+                房间: {isMobile && typeof room === 'string' && room.length > 12
+                  ? `${room.slice(0, 4)}...${room.slice(-4)}`
+                  : room}
               </div>
             </div>
             
@@ -215,81 +258,137 @@ function App() {
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '12px'
+              gap: '8px'
             }}>
               {!isConnected ? (
                 <button 
                   onClick={connectWallet}
                   style={{
-                    backgroundColor: '#007bff',
+                    background: 'linear-gradient(135deg, #007bff 0%, #0056b3 100%)',
                     color: 'white',
-                    padding: isMobile ? '8px 16px' : '10px 20px',
+                    padding: isMobile ? '10px 18px' : '12px 24px',
                     border: 'none',
-                    borderRadius: '20px',
+                    borderRadius: '24px',
                     cursor: 'pointer',
-                    fontSize: isMobile ? '12px' : '14px',
-                    fontWeight: '500',
-                    boxShadow: '0 2px 8px rgba(0,123,255,0.3)',
-                    transition: 'all 0.2s ease',
+                    fontSize: isMobile ? '13px' : '14px',
+                    fontWeight: '600',
+                    boxShadow: '0 4px 15px rgba(0, 123, 255, 0.4)',
+                    transition: 'all 0.3s ease',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '8px'
+                    gap: '8px',
+                    position: 'relative',
+                    overflow: 'hidden'
                   }}
                   onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = '#0056b3';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(0, 123, 255, 0.5)';
                   }}
                   onMouseOut={(e) => {
-                    e.currentTarget.style.backgroundColor = '#007bff';
                     e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '0 4px 15px rgba(0, 123, 255, 0.4)';
                   }}
                 >
-                  🔗 连接钱包
+                  <div style={{
+                    width: '16px',
+                    height: '16px',
+                    borderRadius: '50%',
+                    backgroundColor: 'rgba(255,255,255,0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '10px'
+                  }}>
+                    🔗
+                  </div>
+                  连接钱包
                 </button>
               ) : (
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '12px',
-                  backgroundColor: '#f8f9fa',
-                  padding: isMobile ? '6px 12px' : '8px 16px',
-                  borderRadius: '20px',
-                  border: '1px solid #e9ecef'
+                  background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
+                  padding:  '0px 0px',
+                  margin: '0px 0px 1rem  0px ',
+                  borderRadius: '24px',
+                  border: '1px solid #dee2e6',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                  position: 'relative'
                 }}>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ 
-                      fontSize: isMobile ? '12px' : '14px', 
-                      color: '#495057',
-                      fontWeight: '500'
+                  {!isMobile && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      background: 'linear-gradient(135deg, #28a745 0%, #20c997 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      boxShadow: '0 2px 6px rgba(40, 167, 69, 0.3)'
                     }}>
-                      {name}
+                      ✓
                     </div>
-                    <div style={{ 
-                      fontSize: '12px', 
-                      color: '#6c757d'
-                    }}>
-                      已连接
+                    <div style={{ textAlign: 'left' }}>
+                      <div style={{ 
+                        fontSize: isMobile ? '12px' : '13px', 
+                        color: '#495057',
+                        fontWeight: '600',
+                        lineHeight: '1.2'
+                      }}>
+                        {name}
+                      </div>
+                      <div style={{ 
+                        fontSize: '10px', 
+                        color: '#6c757d',
+                        fontWeight: '500'
+                      }}>
+                        已连接
+                      </div>
                     </div>
-                  </div>
+                  </div>)}
+                  {!isMobile && ( <div style={{
+                    width: '1px',
+                    height: '24px',
+                    backgroundColor: '#dee2e6',
+                    margin: '0 4px'
+                  }}></div>)}
                   <button 
                     onClick={disconnectWallet}
                     style={{
-                      backgroundColor: '#dc3545',
+                      background: 'linear-gradient(135deg, #dc3545 0%, #c82333 100%)',
                       color: 'white',
-                      padding: isMobile ? '4px 8px' : '6px 12px',
+                      padding: isMobile ? '6px 12px' : '8px 14px',
                       border: 'none',
-                      borderRadius: '12px',
+                      margin: '0px 0px',
+                      borderRadius: '16px',
                       cursor: 'pointer',
-                      fontSize: isMobile ? '10px' : '12px',
-                      transition: 'background-color 0.2s ease'
+                      fontSize: isMobile ? '10px' : '11px',
+                      fontWeight: '600',
+                      transition: 'all 0.3s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      boxShadow: '0 2px 6px rgba(220, 53, 69, 0.3)'
                     }}
                     onMouseOver={(e) => {
-                      e.currentTarget.style.backgroundColor = '#c82333';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                      e.currentTarget.style.boxShadow = '0 4px 10px rgba(220, 53, 69, 0.4)';
                     }}
                     onMouseOut={(e) => {
-                      e.currentTarget.style.backgroundColor = '#dc3545';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = '0 2px 6px rgba(220, 53, 69, 0.3)';
                     }}
                   >
+                    <span style={{ fontSize: '10px' }}>✕</span>
                     断开
                   </button>
                 </div>
@@ -338,9 +437,9 @@ function App() {
                     display: 'flex',
                     alignItems: 'flex-start',
                     gap: '12px',
-                    justifyContent: message.user === name ? 'flex-end' : 'flex-start'
+                    justifyContent: isCurrentUser(message.user) ? 'flex-end' : 'flex-start'
                   }}>
-                    {message.user !== name && (
+                    {!isCurrentUser(message.user) && (
                       <div style={{
                         width: isMobile ? '40px' : '48px',
                         height: isMobile ? '40px' : '48px',
@@ -356,40 +455,44 @@ function App() {
                         flexDirection: 'column',
                         lineHeight: '1'
                       }}>
-                        {message.user.includes('...') ? (
+                        {getShortAddress(message.user).includes('...') ? (
                           <>
-                            <div>{message.user.split('...')[0]}</div>
-                            <div>{message.user.split('...')[1]}</div>
+                            <div>{getShortAddress(message.user).split('...')[0]}</div>
+                            <div>{getShortAddress(message.user).split('...')[1]}</div>
                           </>
                         ) : (
-                          message.user.slice(0, 2).toUpperCase()
+                          getShortAddress(message.user).slice(0, 2).toUpperCase()
                         )}
                       </div>
                     )}
                     <div style={{
-                      backgroundColor: message.user === name ? '#007bff' : '#f8f9fa',
-                      color: message.user === name ? 'white' : '#333',
+                      backgroundColor: isCurrentUser(message.user) ? '#007bff' : '#f8f9fa',
+                      color: isCurrentUser(message.user) ? 'white' : '#333',
                       padding: isMobile ? '10px 12px' : '12px 16px',
                       borderRadius: '18px',
                       maxWidth: isMobile ? '85%' : '70%',
                       wordWrap: 'break-word',
                       boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                      borderBottomRightRadius: message.user === name ? '4px' : '18px',
-                      borderBottomLeftRadius: message.user === name ? '18px' : '4px'
+                      borderBottomRightRadius: isCurrentUser(message.user) ? '4px' : '18px',
+                      borderBottomLeftRadius: isCurrentUser(message.user) ? '18px' : '4px',
+                      position: 'relative'
                     }}>
                       <div style={{
                         fontSize: isMobile ? '10px' : '12px',
                         opacity: 0.8,
                         marginBottom: '4px',
-                        fontWeight: '500'
+                        fontWeight: '500',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
                       }}>
-                        {message.user}
+                        <span>{getShortAddress(message.user)}</span>
                       </div>
                       <div style={{ fontSize: isMobile ? '13px' : '14px', lineHeight: '1.4' }}>
                         {message.content}
                       </div>
                     </div>
-                    {message.user === name && (
+                    {isCurrentUser(message.user) && (
                       <div style={{
                         width: isMobile ? '40px' : '48px',
                         height: isMobile ? '40px' : '48px',
@@ -405,13 +508,13 @@ function App() {
                         flexDirection: 'column',
                         lineHeight: '1'
                       }}>
-                        {message.user.includes('...') ? (
+                        {getShortAddress(message.user).includes('...') ? (
                           <>
-                            <div>{message.user.split('...')[0]}</div>
-                            <div>{message.user.split('...')[1]}</div>
+                            <div>{getShortAddress(message.user).split('...')[0]}</div>
+                            <div>{getShortAddress(message.user).split('...')[1]}</div>
                           </>
                         ) : (
-                          message.user.slice(0, 2).toUpperCase()
+                          getShortAddress(message.user).slice(0, 2).toUpperCase()
                         )}
                       </div>
                     )}
@@ -450,7 +553,7 @@ function App() {
                 const chatMessage: ChatMessage = {
                   id: nanoid(8),
                   content: content.value,
-                  user: name,
+                  user: walletAddress,
                   role: "user",
                 };
                 setMessages((messages) => [...messages, chatMessage]);
@@ -529,8 +632,8 @@ function App() {
                   }
                 }}
               >
-                📤 发送
-              </button>
+                  📤 发送
+                </button>
             </form>
           </div>
         </div>
