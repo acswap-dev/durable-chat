@@ -43,28 +43,24 @@ export default function CreateRoom() {
     }
   };
 
-  // 页面加载时自动检测当前账户，并监听钱包切换自动刷新状态
+  // 页面加载时自动检测当前账户，并监听钱包切换自动刷新状态（第一个钱包地址变化时就刷新）
   useEffect(() => {
     function updateAccount(accounts: string[]) {
-      console.log('[autoDetectOrChanged]', accounts);
-      if (accounts.length > 0) {
-        setWalletAddress(accounts[0]);
-        setIsConnected(true);
-      } else {
-        setWalletAddress("");
-        setIsConnected(false);
+    //   console.log('[autoDetectOrChanged]', accounts);
+      const newAddress = accounts[0] || "";
+      if (newAddress !== walletAddress) {
+        setWalletAddress(newAddress);
+        setIsConnected(!!newAddress);
       }
     }
     if (window.ethereum) {
-      // 页面加载时自动检测
       window.ethereum.request({ method: 'eth_accounts' }).then(updateAccount);
-      // 监听切换
       window.ethereum.on('accountsChanged', updateAccount);
       return () => {
         window.ethereum && window.ethereum.removeListener('accountsChanged', updateAccount);
       };
     }
-  }, []);
+  }, [walletAddress]);
 
   // 只要walletAddress或isConnected变化就自动查余额，并打印log
   useEffect(() => {

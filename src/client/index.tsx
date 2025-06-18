@@ -60,26 +60,25 @@ function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // 自动恢复钱包连接
+  // 自动检测和监听钱包账户变化（第一个地址变化时就刷新）
   useEffect(() => {
-    async function checkWalletConnection() {
-      if (typeof window.ethereum !== 'undefined') {
-        try {
-          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-          if (accounts.length > 0) {
-            const address = accounts[0];
-            setWalletAddress(address);
-            const shortAddress = getShortAddress(address);
-            setName(shortAddress);
-            setIsConnected(true);
-          }
-        } catch (error) {
-          console.error('自动恢复钱包连接失败:', error);
-        }
+    function updateAccount(accounts: string[]) {
+      const newAddress = accounts[0] || "";
+      if (newAddress !== walletAddress) {
+        setWalletAddress(newAddress);
+        const shortAddress = getShortAddress(newAddress);
+        setName(shortAddress);
+        setIsConnected(!!newAddress);
       }
     }
-    checkWalletConnection();
-  }, []);
+    if (window.ethereum) {
+      window.ethereum.request({ method: 'eth_accounts' }).then(updateAccount);
+      window.ethereum.on('accountsChanged', updateAccount);
+      return () => {
+        window.ethereum && window.ethereum.removeListener('accountsChanged', updateAccount);
+      };
+    }
+  }, [walletAddress]);
 
   // 自动滚动到最新消息
   const scrollToBottom = () => {
@@ -124,23 +123,6 @@ function App() {
     setName("");
     setIsConnected(false);
   };
-
-  // 监听钱包账户变化
-  useEffect(() => {
-    if (typeof window.ethereum !== 'undefined') {
-      window.ethereum.on('accountsChanged', (accounts: string[]) => {
-        if (accounts.length > 0) {
-          const address = accounts[0];
-          setWalletAddress(address);
-          const shortAddress = getShortAddress(address);
-          setName(shortAddress);
-          setIsConnected(true);
-        } else {
-          disconnectWallet();
-        }
-      });
-    }
-  }, []);
 
   const socket = usePartySocket({
     party: "chat",
