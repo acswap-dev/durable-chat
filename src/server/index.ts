@@ -19,23 +19,89 @@ const fallbackProvider = new ethers.FallbackProvider(
 );
 
 async function verifyPayment(txHash: string, wallet: string) {
-  // 用BscScan API校验交易
-  const url = `https://api.bscscan.com/api?module=transaction&action=gettxreceiptstatus&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
-  const res = await fetch(url);
-  const data = (await res.json()) as any;
-  if (data.status === "1" && data.result.status === "1") {
-    // 交易成功，再查转账事件
-    // 查询USDT转账事件
-    const logUrl = `https://api.bscscan.com/api?module=logs&action=getLogs&fromBlock=0&toBlock=latest&address=${CHAIN_CONFIG.USDT_ADDRESS}&topic0=0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}&topic1=0x${wallet.replace('0x','').padStart(64,'0')}&topic2=0x${CHAIN_CONFIG.RECEIVER.replace('0x','').padStart(64,'0')}`;
-    const logRes = await fetch(logUrl);
-    const logData = (await logRes.json()) as any;
-    // 检查是否有符合条件的转账
-    const amountHex = BigInt(ethers.parseUnits(CHAIN_CONFIG.CREATE_ROOM_AMOUNT, CHAIN_CONFIG.USDT_DECIMALS)).toString(16).padStart(64, '0');
-    const found = (logData.result || []).some((log: any) => log.data.toLowerCase() === '0x'+amountHex);
-    if (found) return { success: true };
-    return { success: false, message: "未检测到正确的USDT转账" };
+  console.log('[verifyPayment] 开始验证支付:', { txHash, wallet });
+  
+  // 用BscScan API校验交易状态
+  const statusUrl = `https://api.bscscan.com/api?module=transaction&action=gettxreceiptstatus&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
+  console.log('[verifyPayment] 状态查询URL:', statusUrl);
+  const statusRes = await fetch(statusUrl);
+  const statusData = (await statusRes.json()) as any;
+  console.log('[verifyPayment] 状态查询结果:', statusData);
+  
+  if (statusData.status === "1" && statusData.result.status === "1") {
+    // 交易成功，获取该交易的详细收据信息
+    const receiptUrl = `https://api.bscscan.com/api?module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
+    console.log('[verifyPayment] 收据查询URL:', receiptUrl);
+    const receiptRes = await fetch(receiptUrl);
+    const receiptData = (await receiptRes.json()) as any;
+    console.log('[verifyPayment] 收据查询结果:', receiptData);
+    
+    if (receiptData.status === "1" && receiptData.result) {
+      const receipt = receiptData.result;
+      // 检查交易的日志，寻找USDT转账事件
+      const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+      const fromAddress = '0x' + wallet.replace('0x','').padStart(64,'0');
+      const toAddress = '0x' + CHAIN_CONFIG.RECEIVER.replace('0x','').padStart(64,'0');
+      const expectedAmount = BigInt(ethers.parseUnits(CHAIN_CONFIG.CREATE_ROOM_AMOUNT, CHAIN_CONFIG.USDT_DECIMALS)).toString(16).padStart(64, '0');
+      
+      console.log('[verifyPayment] 验证参数:', {
+        transferTopic,
+        fromAddress,
+        toAddress,
+        expectedAmount,
+        usdtAddress: CHAIN_CONFIG.USDT_ADDRESS,
+        receiver: CHAIN_CONFIG.RECEIVER,
+        amount: CHAIN_CONFIG.CREATE_ROOM_AMOUNT
+      });
+      
+      // 在该交易的日志中查找USDT转账事件
+      console.log('[verifyPayment] 交易日志数量:', receipt.logs?.length);
+      
+      // 输出所有日志用于调试
+      receipt.logs?.forEach((log: any, index: number) => {
+        console.log(`[verifyPayment] 日志 ${index}:`, {
+          address: log.address,
+          topics: log.topics,
+          data: log.data
+        });
+      });
+      
+      const transferLog = receipt.logs?.find((log: any) => {
+        const addressMatch = log.address.toLowerCase() === CHAIN_CONFIG.USDT_ADDRESS.toLowerCase();
+        const topicMatch = log.topics[0] === transferTopic;
+        const fromMatch = log.topics[1]?.toLowerCase() === fromAddress.toLowerCase();
+        const toMatch = log.topics[2]?.toLowerCase() === toAddress.toLowerCase();
+        const dataMatch = log.data.toLowerCase() === '0x' + expectedAmount;
+        
+        console.log('[verifyPayment] 日志匹配检查:', {
+          addressMatch,
+          topicMatch,
+          fromMatch,
+          toMatch,
+          dataMatch,
+          logAddress: log.address,
+          logTopic0: log.topics[0],
+          logTopic1: log.topics[1],
+          logTopic2: log.topics[2],
+          logData: log.data
+        });
+        
+        return addressMatch && topicMatch && fromMatch && toMatch && dataMatch;
+      });
+      
+      if (transferLog) {
+        console.log('[verifyPayment] 找到匹配的转账日志');
+        return { success: true };
+      } else {
+        console.log('[verifyPayment] 未找到匹配的转账日志');
+        return { success: false, message: "交易中未找到正确的USDT转账记录" };
+      }
+    } else {
+      return { success: false, message: "无法获取交易收据" };
+    }
+  } else {
+    return { success: false, message: "交易未上链或失败" };
   }
-  return { success: false, message: "交易未上链或失败" };
 }
 
 export class Chat extends Server<Env> {

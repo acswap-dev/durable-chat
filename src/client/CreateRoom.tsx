@@ -24,6 +24,10 @@ export default function CreateRoom() {
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [contractName, setContractName] = useState<string>("");
   const [contractSymbol, setContractSymbol] = useState<string>("");
+  const [txHash, setTxHash] = useState<string>("");
+  const [confirmations, setConfirmations] = useState<number>(0);
+  const [requiredConfirmations] = useState<number>(15);
+  const [isWaitingConfirmation, setIsWaitingConfirmation] = useState<boolean>(false);
   const navigate = useNavigate();
 
   // 连接钱包逻辑
@@ -66,19 +70,30 @@ export default function CreateRoom() {
   useEffect(() => {
     async function fetchBalance() {
       console.log('[fetchBalance] isConnected:', isConnected, 'walletAddress:', walletAddress);
-      if (!isConnected || !walletAddress) {
+      if (!isConnected || !walletAddress || !window.ethereum) {
         setUsdtBalance(0n);
         return;
       }
       setBalanceLoading(true);
       try {
-        const usdt = new ethers.Contract(CHAIN_CONFIG.USDT_ADDRESS, usdtAbi, fallbackProvider);
+        // 使用钱包的RPC提供者，确保数据实时更新
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const usdt = new ethers.Contract(CHAIN_CONFIG.USDT_ADDRESS, usdtAbi, provider);
         const balance: bigint = await usdt.balanceOf(walletAddress);
         console.log('[fetchBalance] USDT余额:', balance.toString());
         setUsdtBalance(balance);
       } catch (e) {
-        console.log('[fetchBalance] 查询失败', e);
-        setUsdtBalance(0n);
+        console.log('[fetchBalance] 查询失败，尝试使用fallback provider', e);
+        // 如果钱包RPC失败，回退到公共RPC
+        try {
+          const usdt = new ethers.Contract(CHAIN_CONFIG.USDT_ADDRESS, usdtAbi, fallbackProvider);
+          const balance: bigint = await usdt.balanceOf(walletAddress);
+          console.log('[fetchBalance] 使用fallback provider查询成功:', balance.toString());
+          setUsdtBalance(balance);
+        } catch (fallbackError) {
+          console.log('[fetchBalance] 所有查询方式都失败', fallbackError);
+          setUsdtBalance(0n);
+        }
       } finally {
         setBalanceLoading(false);
       }
@@ -108,6 +123,70 @@ export default function CreateRoom() {
     fetchContractInfo();
   }, [room]);
 
+  // 轮询确认数
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    
+    async function checkConfirmations() {
+      if (!txHash || !isWaitingConfirmation) return;
+      
+      try {
+        if (!window.ethereum) return;
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const tx = await provider.getTransaction(txHash);
+        if (tx && tx.blockNumber) {
+          const currentBlock = await provider.getBlockNumber();
+          const confirmationCount = currentBlock - tx.blockNumber + 1;
+          setConfirmations(Math.max(0, confirmationCount));
+          
+          // 达到要求的确认数后，进行后端验证
+          if (confirmationCount >= requiredConfirmations) {
+            setIsWaitingConfirmation(false);
+            await verifyPaymentWithBackend();
+          }
+        }
+      } catch (error) {
+        console.error('检查确认数失败:', error);
+      }
+    }
+
+    if (isWaitingConfirmation && txHash) {
+      // 立即检查一次
+      checkConfirmations();
+      // 每5秒检查一次
+      interval = setInterval(checkConfirmations, 5000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [txHash, isWaitingConfirmation, requiredConfirmations]);
+
+  // 后端验证支付
+  async function verifyPaymentWithBackend() {
+    try {
+      if (!window.ethereum) throw new Error("MetaMask未连接");
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const res = await fetch("/api/verify-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room,
+          txHash,
+          wallet: await signer.getAddress()
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "支付校验失败");
+      alert("房间创建成功！");
+      navigate(`/${room}`);
+    } catch (e: any) {
+      setError(e.message || "后端验证失败");
+      setLoading(false);
+    }
+  }
+
   async function handlePay() {
     setError("");
     setLoading(true);
@@ -118,28 +197,30 @@ export default function CreateRoom() {
       const signer = await provider.getSigner();
       const usdt = new ethers.Contract(CHAIN_CONFIG.USDT_ADDRESS, usdtAbi, signer);
       const amount = ethers.parseUnits(CHAIN_CONFIG.CREATE_ROOM_AMOUNT, CHAIN_CONFIG.USDT_DECIMALS);
-      // 检查余额（用 fallbackProvider）
-      const usdtRead = new ethers.Contract(CHAIN_CONFIG.USDT_ADDRESS, usdtAbi, fallbackProvider);
-      const balance: bigint = await usdtRead.balanceOf(walletAddress);
+      // 检查余额（优先使用钱包RPC，确保最新余额）
+      let balance: bigint;
+      try {
+        const usdtRead = new ethers.Contract(CHAIN_CONFIG.USDT_ADDRESS, usdtAbi, provider);
+        balance = await usdtRead.balanceOf(walletAddress);
+      } catch (e) {
+        console.log('使用钱包RPC查询余额失败，回退到公共RPC', e);
+        const usdtRead = new ethers.Contract(CHAIN_CONFIG.USDT_ADDRESS, usdtAbi, fallbackProvider);
+        balance = await usdtRead.balanceOf(walletAddress);
+      }
       if (balance < amount) throw new Error("USDT余额不足");
       const tx = await usdt.transfer(CHAIN_CONFIG.RECEIVER, amount);
+      // 设置交易哈希并开始监控确认数
+      setTxHash(tx.hash);
+      setIsWaitingConfirmation(true);
+      setConfirmations(0);
+      // 等待交易上链
       await tx.wait();
-      // 通知后端校验
-      const res = await fetch("/api/verify-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          room,
-          txHash: tx.hash,
-          wallet: await signer.getAddress()
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "支付校验失败");
-      alert("房间创建成功！");
-      navigate(`/${room}`);
     } catch (e: any) {
       setError(e.message || "发生错误");
+      // 出错时重置确认状态
+      setIsWaitingConfirmation(false);
+      setTxHash("");
+      setConfirmations(0);
     } finally {
       setLoading(false);
     }
@@ -166,10 +247,39 @@ export default function CreateRoom() {
       )}
       <button 
         onClick={handlePay} 
-        disabled={loading || !isConnected || notEnough} 
+        disabled={loading || !isConnected || notEnough || isWaitingConfirmation} 
         style={{ padding: "0px 24px", fontSize: 18 }}>
-        {loading ? "支付中..." : notEnough ? "USDT余额不足" : "支付并创建房间"}
+        {isWaitingConfirmation ? "等待确认中..." : loading ? "支付中..." : notEnough ? "USDT余额不足" : "支付并创建房间"}
       </button>
+      {isWaitingConfirmation && (
+        <div style={{ marginTop: 16, textAlign: 'center' }}>
+          <div style={{ color: '#007bff', marginBottom: 8 }}>
+            交易已提交，等待确认中...
+          </div>
+          <div style={{ color: '#28a745', fontSize: 18, fontWeight: 'bold' }}>
+            确认数：{confirmations}/{requiredConfirmations}
+          </div>
+          <div style={{ color: '#666', fontSize: 14, marginTop: 4 }}>
+            交易哈希：{txHash.slice(0, 10)}...{txHash.slice(-8)}
+          </div>
+          <div style={{ 
+            marginTop: 8, 
+            width: '200px', 
+            height: '6px', 
+            backgroundColor: '#e9ecef', 
+            borderRadius: '3px',
+            margin: '8px auto',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              width: `${Math.min(100, (confirmations / requiredConfirmations) * 100)}%`,
+              height: '100%',
+              backgroundColor: confirmations >= requiredConfirmations ? '#28a745' : '#007bff',
+              transition: 'width 0.3s ease'
+            }}></div>
+          </div>
+        </div>
+      )}
       {error && <div style={{ color: "red", marginTop: 16 }}>{error}</div>}
     </div>
   );
