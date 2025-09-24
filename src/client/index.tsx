@@ -45,22 +45,22 @@ function HomePage() {
       lastActivity: "5分钟前",
       isActive: true
     },
-    {
-      id: "general",
-      name: "通用讨论",
-      description: "各种话题的讨论空间，畅所欲言",
-      memberCount: 42,
-      lastActivity: "1分钟前",
-      isActive: true
-    },
-    {
-      id: "welcome",
-      name: "新手欢迎",
-      description: "新用户欢迎聊天室，适合初次体验",
-      memberCount: 23,
-      lastActivity: "10分钟前",
-      isActive: true
-    }
+    // {
+    //   id: "general",
+    //   name: "通用讨论",
+    //   description: "各种话题的讨论空间，畅所欲言",
+    //   memberCount: 42,
+    //   lastActivity: "1分钟前",
+    //   isActive: true
+    // },
+    // {
+    //   id: "welcome",
+    //   name: "新手欢迎",
+    //   description: "新用户欢迎聊天室，适合初次体验",
+    //   memberCount: 23,
+    //   lastActivity: "10分钟前",
+    //   isActive: true
+    // }
   ]);
 
   // 监听窗口大小变化
