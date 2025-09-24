@@ -3,6 +3,29 @@ export type ChatMessage = {
   content: string;
   user: string;
   role: "user" | "assistant";
+  timestamp?: string;
+  messageType?: "text" | "image" | "audio" | "video" | "file";
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  fileMimeType?: string;
+  thumbnailUrl?: string; // 用于视频缩略图
+  duration?: number; // 用于音频/视频时长（秒）
+};
+
+export type OnlineUser = {
+  address: string;
+  joinTime: number;
+  lastActivity: number;
+};
+
+export type RoomStats = {
+  totalMessages: number;
+  uniqueUsers: number;
+  onlineUsers: number;
+  totalVisitors: number;
+  userMessageCounts: Record<string, number>;
+  onlineUsersList: OnlineUser[];
 };
 
 export type Message =
@@ -12,6 +35,14 @@ export type Message =
       content: string;
       user: string;
       role: "user" | "assistant";
+      timestamp?: string;
+      messageType?: "text" | "image" | "audio" | "video" | "file";
+      fileUrl?: string;
+      fileName?: string;
+      fileSize?: number;
+      fileMimeType?: string;
+      thumbnailUrl?: string;
+      duration?: number;
     }
   | {
       type: "update";
@@ -19,6 +50,14 @@ export type Message =
       content: string;
       user: string;
       role: "user" | "assistant";
+      timestamp?: string;
+      messageType?: "text" | "image" | "audio" | "video" | "file";
+      fileUrl?: string;
+      fileName?: string;
+      fileSize?: number;
+      fileMimeType?: string;
+      thumbnailUrl?: string;
+      duration?: number;
     }
   | {
       type: "all";
@@ -45,6 +84,22 @@ export type Message =
         userMessageCounts: Record<string, number>;
         messages: ChatMessage[];
       };
+    }
+  | {
+      type: "userJoin";
+      user: string;
+    }
+  | {
+      type: "userLeave";
+      user: string;
+    }
+  | {
+      type: "roomStats";
+      stats: RoomStats;
+    }
+  | {
+      type: "heartbeat";
+      user: string;
     };
 
 export const names = [

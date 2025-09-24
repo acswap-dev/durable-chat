@@ -5,7 +5,7 @@ import {
   routePartykitRequest,
 } from "partyserver";
 import { ethers } from "ethers";
-import type { ChatMessage, Message } from "../shared";
+import type { ChatMessage, Message, OnlineUser, RoomStats } from "../shared";
 import { CHAIN_CONFIG } from "../shared.config";
 import usdtAbi from "../abi/usdt.json";
 
@@ -109,6 +109,9 @@ export class Chat extends Server<Env> {
 
   messages = [] as ChatMessage[];
   room = "";
+  onlineUsers = new Map<string, OnlineUser>(); // 在线用户列表
+  userConnections = new Map<string, Connection>(); // 用户连接映射
+  heartbeatInterval: NodeJS.Timeout | null = null;
 
   async onStart() {
     // 校验房间号是否已注册
@@ -124,21 +127,206 @@ export class Chat extends Server<Env> {
     if (!exists) {
       throw new Error("房间未注册，禁止访问");
     }
-    // 新表结构：增加 room 字段
+    
+    // 创建消息表
     this.ctx.storage.sql.exec(
       `CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
-        room TEXT,
         user TEXT,
         role TEXT,
         content TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        message_type TEXT DEFAULT 'text',
+        file_url TEXT,
+        file_name TEXT,
+        file_size INTEGER,
+        file_mime_type TEXT,
+        thumbnail_url TEXT,
+        duration REAL
       )`,
     );
-    // 只加载本房间消息
-    this.messages = this.ctx.storage.sql
-      .exec(`SELECT * FROM messages WHERE room = '${this.room}' ORDER BY timestamp ASC`)
-      .toArray() as ChatMessage[];
+
+    // 添加新列（如果不存在）- 数据库迁移
+    try {
+      this.ctx.storage.sql.exec(`ALTER TABLE messages ADD COLUMN message_type TEXT DEFAULT 'text'`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+    
+    try {
+      this.ctx.storage.sql.exec(`ALTER TABLE messages ADD COLUMN file_url TEXT`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+    
+    try {
+      this.ctx.storage.sql.exec(`ALTER TABLE messages ADD COLUMN file_name TEXT`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+    
+    try {
+      this.ctx.storage.sql.exec(`ALTER TABLE messages ADD COLUMN file_size INTEGER`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+    
+    try {
+      this.ctx.storage.sql.exec(`ALTER TABLE messages ADD COLUMN file_mime_type TEXT`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+    
+    try {
+      this.ctx.storage.sql.exec(`ALTER TABLE messages ADD COLUMN thumbnail_url TEXT`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+    
+    try {
+      this.ctx.storage.sql.exec(`ALTER TABLE messages ADD COLUMN duration REAL`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+    
+    // 创建访客统计表
+    this.ctx.storage.sql.exec(
+      `CREATE TABLE IF NOT EXISTS visitors (
+        address TEXT PRIMARY KEY,
+        first_visit DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_visit DATETIME DEFAULT CURRENT_TIMESTAMP,
+        visit_count INTEGER DEFAULT 1
+      )`,
+    );
+    
+          // 加载所有消息（兼容旧数据库结构）
+      this.messages = this.ctx.storage.sql
+        .exec(`SELECT 
+          id, 
+          user, 
+          role, 
+          content, 
+          timestamp,
+          COALESCE(message_type, 'text') as messageType,
+          file_url as fileUrl,
+          file_name as fileName,
+          file_size as fileSize,
+          file_mime_type as fileMimeType,
+          thumbnail_url as thumbnailUrl,
+          duration
+        FROM messages ORDER BY timestamp ASC`)
+        .toArray() as ChatMessage[];
+
+    // 启动心跳检测，每30秒清理不活跃用户
+    this.startHeartbeatCheck();
+  }
+
+  startHeartbeatCheck() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+    
+    this.heartbeatInterval = setInterval(() => {
+      const now = Date.now();
+      const timeout = 60000; // 60秒超时
+      
+      // 清理超时用户
+      for (const [address, user] of this.onlineUsers.entries()) {
+        if (now - user.lastActivity > timeout) {
+          this.removeOnlineUser(address);
+        }
+      }
+    }, 30000); // 每30秒检查一次
+  }
+
+  addOnlineUser(address: string, connection: Connection) {
+    const now = Date.now();
+    
+    // 记录访客
+    this.ctx.storage.sql.exec(
+      `INSERT INTO visitors (address, first_visit, last_visit, visit_count) 
+       VALUES (?, datetime('now'), datetime('now'), 1)
+       ON CONFLICT(address) DO UPDATE SET 
+       last_visit = datetime('now'), 
+       visit_count = visit_count + 1`,
+      address
+    );
+
+    // 添加到在线用户列表
+    if (!this.onlineUsers.has(address)) {
+      this.onlineUsers.set(address, {
+        address,
+        joinTime: now,
+        lastActivity: now
+      });
+      
+      // 通知其他用户有新用户加入
+      this.broadcastMessage({
+        type: "userJoin",
+        user: address
+      } as Message, [address]);
+    }
+    
+    this.userConnections.set(address, connection);
+    this.updateUserActivity(address);
+    this.broadcastRoomStats();
+  }
+
+  removeOnlineUser(address: string) {
+    if (this.onlineUsers.has(address)) {
+      this.onlineUsers.delete(address);
+      this.userConnections.delete(address);
+      
+      // 通知其他用户有用户离开
+      this.broadcastMessage({
+        type: "userLeave",
+        user: address
+      } as Message);
+      
+      this.broadcastRoomStats();
+    }
+  }
+
+  updateUserActivity(address: string) {
+    const user = this.onlineUsers.get(address);
+    if (user) {
+      user.lastActivity = Date.now();
+    }
+  }
+
+  getRoomStats(): RoomStats {
+    const totalMessages = this.messages.length;
+    const uniqueUsers = new Set(this.messages.map(m => m.user)).size;
+    const onlineUsers = this.onlineUsers.size;
+    
+    // 获取总访客数
+    const totalVisitorsResult = this.ctx.storage.sql.exec(
+      `SELECT COUNT(*) as count FROM visitors`
+    ).toArray();
+    const totalVisitors = Number(totalVisitorsResult[0]?.count) || 0;
+    
+    // 用户消息统计
+    const userMessageCounts: Record<string, number> = {};
+    this.messages.forEach(message => {
+      userMessageCounts[message.user] = (userMessageCounts[message.user] || 0) + 1;
+    });
+
+    return {
+      totalMessages,
+      uniqueUsers,
+      onlineUsers,
+      totalVisitors,
+      userMessageCounts,
+      onlineUsersList: Array.from(this.onlineUsers.values())
+    };
+  }
+
+  broadcastRoomStats() {
+    const stats = this.getRoomStats();
+    this.broadcastMessage({
+      type: "roomStats",
+      stats
+    } as Message);
   }
 
   onConnect(connection: Connection) {
@@ -150,27 +338,68 @@ export class Chat extends Server<Env> {
     );
   }
 
+  onClose(connection: Connection) {
+    // 找到断开连接的用户
+    for (const [address, conn] of this.userConnections.entries()) {
+      if (conn === connection) {
+        this.removeOnlineUser(address);
+        break;
+      }
+    }
+  }
+
   saveMessage(message: ChatMessage) {
+    // 添加时间戳（如果没有的话）
+    if (!message.timestamp) {
+      message.timestamp = new Date().toISOString();
+    }
+    
     // check if the message already exists
     const existingMessage = this.messages.find((m) => m.id === message.id);
     if (existingMessage) {
       this.messages = this.messages.map((m) => {
         if (m.id === message.id) {
-          return message;
+          return { ...message, timestamp: message.timestamp };
         }
         return m;
       });
     } else {
-      this.messages.push(message);
+      this.messages.push({ ...message, timestamp: message.timestamp });
     }
+    
     this.ctx.storage.sql.exec(
-      `INSERT INTO messages (id, room, user, role, content) VALUES ('${
-        message.id
-      }', '${this.room}', '${message.user}', '${message.role}', ${JSON.stringify(
-        message.content,
-      )}) ON CONFLICT (id) DO UPDATE SET content = ${JSON.stringify(
-        message.content,
-      )}`,
+      `INSERT INTO messages (id, user, role, content, timestamp, message_type, file_url, file_name, file_size, file_mime_type, thumbnail_url, duration) 
+       VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET 
+         content = ?, 
+         timestamp = datetime('now'),
+         message_type = ?,
+         file_url = ?,
+         file_name = ?,
+         file_size = ?,
+         file_mime_type = ?,
+         thumbnail_url = ?,
+         duration = ?`,
+      message.id, 
+      message.user, 
+      message.role, 
+      message.content,
+      message.messageType || 'text',
+      message.fileUrl || null,
+      message.fileName || null,
+      message.fileSize || null,
+      message.fileMimeType || null,
+      message.thumbnailUrl || null,
+      message.duration || null,
+      // ON CONFLICT UPDATE values
+      message.content,
+      message.messageType || 'text',
+      message.fileUrl || null,
+      message.fileName || null,
+      message.fileSize || null,
+      message.fileMimeType || null,
+      message.thumbnailUrl || null,
+      message.duration || null
     );
   }
 
@@ -264,66 +493,147 @@ export class Chat extends Server<Env> {
   }
 
   onMessage(connection: Connection, message: WSMessage) {
-    const parsed = JSON.parse(message as string) as Message;
-    // ====== 全局管理命令 ======
-    if ((parsed as any).type === "admin-global") {
-      const adminMessage = parsed as any;
-      switch (adminMessage.action) {
-        case "getStats":
-          connection.send(JSON.stringify({
+    const data = JSON.parse(message as string) as Message;
+    console.log("收到消息:", data);
+
+    if (data.type === "add") {
+      // 用户发送消息时，自动加入在线列表
+      this.addOnlineUser(data.user, connection);
+      
+      const chatMessage: ChatMessage = {
+        id: data.id,
+        content: data.content,
+        user: data.user,
+        role: data.role,
+        timestamp: new Date().toISOString(),
+        messageType: data.messageType,
+        fileUrl: data.fileUrl,
+        fileName: data.fileName,
+        fileSize: data.fileSize,
+        fileMimeType: data.fileMimeType,
+        thumbnailUrl: data.thumbnailUrl,
+        duration: data.duration
+      };
+      this.saveMessage(chatMessage);
+      
+      // 广播消息时也包含时间戳
+      this.broadcastMessage({
+        ...data,
+        timestamp: chatMessage.timestamp
+      } as Message);
+      this.updateUserActivity(data.user);
+      
+    } else if (data.type === "userJoin") {
+      // 用户主动加入房间
+      this.addOnlineUser(data.user, connection);
+      
+    } else if (data.type === "heartbeat") {
+      // 心跳消息，更新用户活动时间
+      this.updateUserActivity(data.user);
+      
+    } else if (data.type === "admin") {
+      if (data.action === "getStats") {
+        const stats = this.getMessageStats();
+        connection.send(
+          JSON.stringify({
             type: "stats",
-            data: this.getAllMessageStats()
-          }));
-          break;
-        case "delete":
-          this.deleteMessageGlobal(adminMessage.messageId);
-          connection.send(JSON.stringify({ type: "ok" }));
-          break;
-        case "clear":
-          this.clearAllMessagesGlobal();
-          connection.send(JSON.stringify({ type: "ok" }));
-          break;
-        case "deleteUser":
-          this.deleteUserMessagesGlobal(adminMessage.user);
-          connection.send(JSON.stringify({ type: "ok" }));
-          break;
+            data: stats,
+          } satisfies Message),
+        );
+      } else if (data.action === "delete" && data.messageId) {
+        this.deleteMessage(data.messageId);
+      } else if (data.action === "clear") {
+        this.clearAllMessages();
+      } else if (data.action === "deleteUser" && data.user) {
+        this.deleteUserMessages(data.user);
       }
-      return;
     }
-    // ====== 普通管理命令 ======
-    if (parsed.type === "admin") {
-      const adminMessage = parsed as any;
-      switch (adminMessage.action) {
-        case "delete":
-          this.deleteMessage(adminMessage.messageId);
-          break;
-        case "clear":
-          this.clearAllMessages();
-          break;
-        case "deleteUser":
-          this.deleteUserMessages(adminMessage.user);
-          break;
-        case "getStats":
-          connection.send(JSON.stringify({
-            type: "stats",
-            data: this.getMessageStats()
-          }));
-          break;
-      }
-      return;
-    }
-    // 处理普通消息
-    if (parsed.type === "add" || parsed.type === "update") {
-      this.saveMessage(parsed);
-    }
-    // 广播消息给其他用户
-    this.broadcast(message);
   }
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    
+    // 文件上传API
+    if (url.pathname === "/api/upload" && request.method === "POST") {
+      try {
+        const formData = await request.formData();
+        const file = formData.get("file") as File;
+        const room = formData.get("room") as string;
+        
+        if (!file || !room) {
+          return new Response(JSON.stringify({ error: "缺少文件或房间信息" }), { 
+            status: 400,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // 检查文件大小 (最大50MB)
+        const maxSize = 50 * 1024 * 1024;
+        if (file.size > maxSize) {
+          return new Response(JSON.stringify({ error: "文件大小超过50MB限制" }), { 
+            status: 400,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // 检查文件类型
+        const allowedTypes = [
+          // 图片
+          'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+          // 音频
+          'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/webm',
+          // 视频
+          'video/mp4', 'video/webm', 'video/ogg', 'video/avi', 'video/mov'
+        ];
+
+        if (!allowedTypes.includes(file.type)) {
+          return new Response(JSON.stringify({ error: "不支持的文件类型" }), { 
+            status: 400,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // 生成文件名
+        const timestamp = Date.now();
+        const extension = file.name.split('.').pop() || '';
+        const fileName = `${room}_${timestamp}.${extension}`;
+        
+        // 在实际生产环境中，这里应该上传到对象存储服务（如AWS S3、CloudFlare R2等）
+        // 现在我们模拟返回一个URL
+        const fileUrl = `https://your-storage.com/uploads/${fileName}`;
+        
+        // 确定消息类型
+        let messageType: "image" | "audio" | "video" | "file" = "file";
+        if (file.type.startsWith('image/')) {
+          messageType = "image";
+        } else if (file.type.startsWith('audio/')) {
+          messageType = "audio";
+        } else if (file.type.startsWith('video/')) {
+          messageType = "video";
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          fileUrl,
+          fileName: file.name,
+          fileSize: file.size,
+          fileMimeType: file.type,
+          messageType
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+
+      } catch (error) {
+        console.error('文件上传错误:', error);
+        return new Response(JSON.stringify({ error: "文件上传失败" }), { 
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+    
     // 支付校验API
     if (url.pathname === "/api/verify-payment" && request.method === "POST") {
       const { room, txHash, wallet } = (await request.json()) as { room: string; txHash: string; wallet: string };
@@ -341,6 +651,7 @@ export default {
       });
       return new Response(JSON.stringify({ success: true }));
     }
+    
     // 其他请求走原有逻辑
     return (
       (await routePartykitRequest(request, { ...env })) ||
