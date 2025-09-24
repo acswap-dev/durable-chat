@@ -155,7 +155,7 @@ function HomePage() {
         </div>
 
         {/* 操作按钮 */}
-        <div style={{
+        {/* <div style={{
           display: 'flex',
           gap: '16px',
           justifyContent: 'center',
@@ -248,7 +248,7 @@ function HomePage() {
           >
             🎲 随机房间
           </button>
-        </div>
+        </div> */}
 
         {/* 房间列表 */}
         <div style={{
