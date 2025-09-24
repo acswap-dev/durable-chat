@@ -33,7 +33,7 @@ function HomePage() {
       id: "0xf5f3dfe314deeea5a8406c6104e32cf988888888",
       name: "马上有钱",
       description: "所有人都可以加入的公共聊天空间",
-      memberCount: 156,
+      memberCount: 10086,
       lastActivity: "2分钟前",
       isActive: true
     },
