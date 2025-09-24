@@ -394,21 +394,52 @@ function Room() {
     },
   });
 
-  // 捕获WebSocket连接失败，自动跳转到付费创建房间
+  // 捕获WebSocket连接失败，自动尝试创建免费房间
   useEffect(() => {
-    // 伪代码：监听socket错误
     if (socket) {
-      socket.addEventListener("error", (e) => {
-        navigate(`/create-room?room=${room}`);
+      socket.addEventListener("error", async (e) => {
+        console.log('WebSocket连接错误:', e);
+        // 尝试创建免费房间
+        await tryCreateFreeRoom();
       });
-      socket.addEventListener("close", (e) => {
+      socket.addEventListener("close", async (e) => {
+        console.log('WebSocket连接关闭:', e);
         // 可根据e.reason判断是否未注册
         if (e.reason && e.reason.includes("未注册")) {
-          navigate(`/create-room?room=${room}`);
+          await tryCreateFreeRoom();
         }
       });
     }
   }, [socket, room, navigate]);
+
+  // 尝试创建免费房间
+  const tryCreateFreeRoom = async () => {
+    if (!room) return;
+    
+    try {
+      console.log('尝试创建免费房间:', room);
+      const response = await fetch('/api/create-free-room', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room })
+      });
+      
+      const result = await response.json();
+      if (result.success) {
+        console.log('免费房间创建成功，重新连接...');
+        // 重新加载页面以重新建立WebSocket连接
+        window.location.reload();
+      } else {
+        console.log('免费房间创建失败:', result.error);
+        // 如果免费房间创建失败，跳转到付费创建页面
+        navigate(`/create-room?room=${room}`);
+      }
+    } catch (error) {
+      console.error('创建免费房间时出错:', error);
+      // 出错时跳转到付费创建页面
+      navigate(`/create-room?room=${room}`);
+    }
+  };
 
   // 发送心跳保持在线状态
   useEffect(() => {

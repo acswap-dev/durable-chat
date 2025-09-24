@@ -21,16 +21,29 @@ const fallbackProvider = new ethers.FallbackProvider(
 async function verifyPayment(txHash: string, wallet: string) {
   console.log('[verifyPayment] 开始验证支付:', { txHash, wallet });
   
-  // 用BscScan API校验交易状态
-  const statusUrl = `https://api.bscscan.com/api?module=transaction&action=gettxreceiptstatus&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
-  console.log('[verifyPayment] 状态查询URL:', statusUrl);
-  const statusRes = await fetch(statusUrl);
-  const statusData = (await statusRes.json()) as any;
-  console.log('[verifyPayment] 状态查询结果:', statusData);
-  
-  if (statusData.status === "1" && statusData.result.status === "1") {
+  try {
+    // 用BscScan API校验交易状态
+    const statusUrl = `https://api.etherscan.io/v2/api?chainid=56&module=transaction&action=gettxreceiptstatus&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
+    console.log('[verifyPayment] 状态查询URL:', statusUrl);
+    
+    const statusRes = await fetch(statusUrl);
+    if (!statusRes.ok) {
+      console.error('[verifyPayment] API请求失败:', statusRes.status, statusRes.statusText);
+      return { success: false, message: `API请求失败: ${statusRes.status}` };
+    }
+    
+    const statusData = (await statusRes.json()) as any;
+    console.log('[verifyPayment] 状态查询结果:', statusData);
+    
+    // 检查API响应格式
+    if (!statusData || typeof statusData.status === 'undefined') {
+      console.error('[verifyPayment] API响应格式错误:', statusData);
+      return { success: false, message: "API响应格式错误" };
+    }
+    
+    if (statusData.status === "1" && statusData.result && statusData.result.status === "1") {
     // 交易成功，获取该交易的详细收据信息
-    const receiptUrl = `https://api.bscscan.com/api?module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
+    const receiptUrl = `https://api.etherscan.io/v2/api?chainid=56module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
     console.log('[verifyPayment] 收据查询URL:', receiptUrl);
     const receiptRes = await fetch(receiptUrl);
     const receiptData = (await receiptRes.json()) as any;
@@ -99,8 +112,24 @@ async function verifyPayment(txHash: string, wallet: string) {
     } else {
       return { success: false, message: "无法获取交易收据" };
     }
-  } else {
-    return { success: false, message: "交易未上链或失败" };
+    } else {
+      console.error('[verifyPayment] 交易状态检查失败:', {
+        status: statusData.status,
+        result: statusData.result,
+        message: statusData.message
+      });
+      
+      if (statusData.status === "0") {
+        return { success: false, message: statusData.message || "交易未找到或失败" };
+      } else if (statusData.result && statusData.result.status === "0") {
+        return { success: false, message: "交易失败" };
+      } else {
+        return { success: false, message: "交易状态未知" };
+      }
+    }
+  } catch (error) {
+    console.error('[verifyPayment] 验证过程出错:', error);
+    return { success: false, message: `验证过程出错: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
@@ -125,7 +154,19 @@ export class Chat extends Server<Env> {
     });
     const { exists } = (await res.json()) as { exists: boolean };
     if (!exists) {
-      throw new Error("房间未注册，禁止访问");
+      console.log(`房间 ${this.room} 未注册，尝试自动创建免费房间...`);
+      // 尝试自动创建免费房间
+      try {
+        await stub.fetch("http://dummy/add", {
+          method: "POST",
+          body: JSON.stringify({ roomId: this.room }),
+          headers: { "Content-Type": "application/json" }
+        });
+        console.log(`房间 ${this.room} 自动创建成功`);
+      } catch (error) {
+        console.error(`房间 ${this.room} 自动创建失败:`, error);
+        throw new Error("房间未注册，禁止访问");
+      }
     }
     
     // 创建消息表
