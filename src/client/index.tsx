@@ -36,7 +36,31 @@ function HomePage() {
       memberCount: 156,
       lastActivity: "2分钟前",
       isActive: true
-    } 
+    },
+    {
+      id: "public-chat",
+      name: "公共聊天室",
+      description: "免费开放的公共聊天空间，欢迎所有人加入",
+      memberCount: 89,
+      lastActivity: "5分钟前",
+      isActive: true
+    },
+    {
+      id: "general",
+      name: "通用讨论",
+      description: "各种话题的讨论空间，畅所欲言",
+      memberCount: 42,
+      lastActivity: "1分钟前",
+      isActive: true
+    },
+    {
+      id: "welcome",
+      name: "新手欢迎",
+      description: "新用户欢迎聊天室，适合初次体验",
+      memberCount: 23,
+      lastActivity: "10分钟前",
+      isActive: true
+    }
   ]);
 
   // 监听窗口大小变化
@@ -57,6 +81,29 @@ function HomePage() {
   // 创建新房间
   const createNewRoom = () => {
     navigate('/create-room');
+  };
+
+  // 快速创建免费房间
+  const createFreeRoom = async () => {
+    const roomId = nanoid(8); // 生成8位随机房间ID
+    try {
+      const response = await fetch('/api/create-free-room', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: roomId })
+      });
+      
+      const result = await response.json();
+      if (result.success) {
+        alert('免费房间创建成功！');
+        navigate(`/room/${roomId}`);
+      } else {
+        alert(result.error || '创建房间失败');
+      }
+    } catch (error) {
+      console.error('创建免费房间失败:', error);
+      alert('创建房间失败，请稍后重试');
+    }
   };
 
   // 随机加入房间
@@ -142,6 +189,35 @@ function HomePage() {
             }}
           >
             ➕ 创建房间
+          </button>
+          
+          <button
+            onClick={createFreeRoom}
+            style={{
+              background: 'linear-gradient(135deg, #17a2b8 0%, #138496 100%)',
+              color: 'white',
+              padding: isMobile ? '12px 24px' : '14px 28px',
+              border: 'none',
+              borderRadius: '25px',
+              cursor: 'pointer',
+              fontSize: isMobile ? '14px' : '16px',
+              fontWeight: '600',
+              boxShadow: '0 4px 15px rgba(23, 162, 184, 0.3)',
+              transition: 'all 0.3s ease',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 6px 20px rgba(23, 162, 184, 0.4)';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 15px rgba(23, 162, 184, 0.3)';
+            }}
+          >
+            🆓 免费房间
           </button>
           
           <button

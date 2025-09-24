@@ -551,8 +551,52 @@ export class Chat extends Server<Env> {
   }
 }
 
+// 预定义房间列表
+const PREDEFINED_ROOMS = [
+  "0xf5f3dfe314deeea5a8406c6104e32cf988888888", // 马上有钱房间
+  "public-chat", // 公共聊天室
+  "general", // 通用聊天室
+  "welcome" // 欢迎聊天室
+];
+
+// 初始化预定义房间
+async function initializePredefinedRooms(env: Env) {
+  const id = env.RoomRegistry.idFromName("global");
+  const stub = env.RoomRegistry.get(id);
+  
+  for (const roomId of PREDEFINED_ROOMS) {
+    try {
+      // 检查房间是否已存在
+      const hasRes = await stub.fetch("http://dummy/has", {
+        method: "POST",
+        body: JSON.stringify({ roomId }),
+        headers: { "Content-Type": "application/json" }
+      });
+      const { exists } = (await hasRes.json()) as { exists: boolean };
+      
+      // 如果不存在，则注册
+      if (!exists) {
+        await stub.fetch("http://dummy/add", {
+          method: "POST",
+          body: JSON.stringify({ roomId }),
+          headers: { "Content-Type": "application/json" }
+        });
+        console.log(`已注册预定义房间: ${roomId}`);
+      }
+    } catch (error) {
+      console.error(`注册预定义房间失败 ${roomId}:`, error);
+    }
+  }
+}
+
 export default {
   async fetch(request, env) {
+    // 初始化预定义房间（只在第一次请求时执行）
+    if (!(globalThis as any).roomsInitialized) {
+      await initializePredefinedRooms(env);
+      (globalThis as any).roomsInitialized = true;
+    }
+    
     const url = new URL(request.url);
     
     // 文件上传API
@@ -632,6 +676,46 @@ export default {
           headers: { "Content-Type": "application/json" }
         });
       }
+    }
+    
+    // 免费房间注册API
+    if (url.pathname === "/api/create-free-room" && request.method === "POST") {
+      const { room } = (await request.json()) as { room: string };
+      
+      if (!room || room.trim() === "") {
+        return new Response(JSON.stringify({ error: "房间ID不能为空" }), { 
+          status: 400,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      
+      // 检查房间是否已存在
+      const id = env.RoomRegistry.idFromName("global");
+      const stub = env.RoomRegistry.get(id);
+      const hasRes = await stub.fetch("http://dummy/has", {
+        method: "POST",
+        body: JSON.stringify({ roomId: room }),
+        headers: { "Content-Type": "application/json" }
+      });
+      const { exists } = (await hasRes.json()) as { exists: boolean };
+      
+      if (exists) {
+        return new Response(JSON.stringify({ error: "房间已存在" }), { 
+          status: 400,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      
+      // 注册免费房间
+      await stub.fetch("http://dummy/add", {
+        method: "POST",
+        body: JSON.stringify({ roomId: room }),
+        headers: { "Content-Type": "application/json" }
+      });
+      
+      return new Response(JSON.stringify({ success: true, message: "免费房间创建成功" }), {
+        headers: { "Content-Type": "application/json" }
+      });
     }
     
     // 支付校验API
