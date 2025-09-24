@@ -1025,14 +1025,14 @@ function Room() {
                           alignItems: 'center',
                           justifyContent: 'center',
                           color: 'white',
-                          fontSize: isMobile ? '13px' : '15px',
+                          fontSize: isMobile ? '10px' : '12px',
                           fontWeight: 'bold',
                           flexShrink: 0,
                           boxShadow: '0 6px 20px rgba(102, 126, 234, 0.3)',
                           border: '3px solid rgba(255,255,255,0.9)',
                           position: 'relative'
                         }}>
-                          {getShortAddress(message.user).slice(0, 2).toUpperCase()}
+                          {getShortAddress(message.user).slice(-4).toUpperCase()}
                           <div style={{
                             position: 'absolute',
                             bottom: '-3px',
