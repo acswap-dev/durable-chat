@@ -43,7 +43,7 @@ async function verifyPayment(txHash: string, wallet: string) {
     
     if (statusData.status === "1" && statusData.result && statusData.result.status === "1") {
     // 交易成功，获取该交易的详细收据信息
-    const receiptUrl = `https://api.etherscan.io/v2/api?chainid=56module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
+    const receiptUrl = `https://api.etherscan.io/v2/api?chainid=56&module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${CHAIN_CONFIG.BSC_SCAN_API_KEY}`;
     console.log('[verifyPayment] 收据查询URL:', receiptUrl);
     const receiptRes = await fetch(receiptUrl);
     const receiptData = (await receiptRes.json()) as any;

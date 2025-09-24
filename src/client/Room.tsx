@@ -2,6 +2,7 @@ import { usePartySocket } from "partysocket/react";
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
 import { nanoid } from "nanoid";
+import { ethers } from "ethers";
 
 import { type ChatMessage, type Message, type RoomStats } from "../shared";
 
@@ -24,6 +25,8 @@ function Room() {
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [roomStats, setRoomStats] = useState<RoomStats | null>(null);
+  const [contractName, setContractName] = useState<string>("");
+  const [contractSymbol, setContractSymbol] = useState<string>("");
   const { room } = useParams();
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -68,6 +71,37 @@ function Room() {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // 获取合约信息
+  const fetchContractInfo = async (contractAddress: string) => {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress)) {
+      return;
+    }
+    
+    try {
+      const ERC20_ABI = [
+        "function name() view returns (string)",
+        "function symbol() view returns (string)"
+      ];
+      
+      // 使用BSC RPC
+      const provider = new ethers.JsonRpcProvider("https://binance.llamarpc.com");
+      const contract = new ethers.Contract(contractAddress, ERC20_ABI, provider);
+      
+      const [name, symbol] = await Promise.all([
+        contract.name(),
+        contract.symbol()
+      ]);
+      
+      setContractName(name);
+      setContractSymbol(symbol);
+      console.log('合约信息获取成功:', { name, symbol });
+    } catch (error) {
+      console.log('获取合约信息失败:', error);
+      setContractName("");
+      setContractSymbol("");
+    }
   };
 
   // 文件上传处理
@@ -273,6 +307,13 @@ function Room() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // 获取合约信息
+  useEffect(() => {
+    if (room) {
+      fetchContractInfo(room);
+    }
+  }, [room]);
 
   // 自动检测和监听钱包账户变化（第一个地址变化时就刷新）
   useEffect(() => {
@@ -601,7 +642,7 @@ function Room() {
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent'
                   }}>💬</span>
-                  Web3 聊天室
+                  {contractSymbol ? `${contractSymbol} 聊天室` : contractName ? `${contractName} 聊天室` : 'Web3 聊天室'}
                 </h2>
                 <div style={{ 
                   fontSize: '13px', 
